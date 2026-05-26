@@ -1,0 +1,14 @@
+{
+  "name": "azura-anti-enemy-ultra",
+  "version": "2.0.0",
+  "description": "AZURA ADVANCED SECURITY | ANTI NUKE, ANTI RAID, COMPLETE PROTECTION",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.0",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7"
+  }
+}
