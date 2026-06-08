@@ -1,6 +1,6 @@
 const {
     Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder, Events,
-    REST, Routes, SlashCommandBuilder, AuditLogEvent, ChannelType
+    REST, Routes, SlashCommandBuilder, AuditLogEvent, ChannelType, ActivityType, PermissionsBitField
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -35,21 +35,26 @@ const DB = {
         antiRaidDetection: true,     // 🔴 MAXIMUM: AUTO LOCK + AUTO BAN SA MGA RAIDERS
         antiGiveAdmin: true,         // 🔴 MAXIMUM: BAWAL MAGBIGAY NG ADMIN, AGAD NA PARUSAHAN
         antiSpam: true,              // 🔴 MAXIMUM: AGAD NA TIMEOUT AT BURA
-        linkProtection: true,        // 🔴 MAXIMUM: BAWAL ANG IBANG SERVER LINKS, BUBURAHIN AT PARUSAHAN
+        linkProtection: false,       // ✅ PINAYAGAN NA: PWEDE NA MAG SEND NG LINKS
         antiImageGrabber: true,      // 🔴 MAXIMUM: BAWAL ANG LAHAT NG IP LOGGER / GRABBER
         antiMassBan: true,           // 🔴 BAGO: BAWAL ANG MARAMIHANG PAGBAN
         antiMassKick: true,          // 🔴 BAGO: BAWAL ANG MARAMIHANG PAGKICK
+        antiMassRole: true,          // 🔴 BAGO: BAWAL ANG MARAMIHANG PAGBIGAY NG ROLE
         antiChannelEdit: true,       // 🔴 BAGO: BAWAL PALITAN ANG PANGALAN / SETTINGS NG CHANNEL
         antiRoleCreateDelete: true,  // 🔴 BAGO: BAWAL GUMAWA O MAGBURA NG ROLE
         antiWebhook: true,           // 🔴 BAGO: BAWAL GUMAWA NG WEBHOOK (GINAGAMIT SA NUKE)
         antiServerEdit: true,        // 🔴 BAGO: BAWAL PALITAN ANG ICON / PANGALAN NG SERVER
-        antiAddBot: true             // 🔴 BAGO: BAWAL DUMAGDAG NG IBANG BOT
+        antiAddBot: true,            // 🔴 BAGO: BAWAL DUMAGDAG NG IBANG BOT
+        antiEmojiSticker: true,      // 🔴 BAGO: BAWAL BURAHIN O PALITAN ANG EMOJI/STICKER
+        antiIntegration: true        // 🔴 BAGO: BAWAL GUMAWA NG INTEGRATION
     }
 };
 
 const spamMap = new Map();
-const actionLog = new Map(); // Para sa Mass Ban/Kick detection
+const actionLog = new Map(); // Para sa Mass Ban/Kick/Role detection
 let joinLog = [];
+const COOLDOWN = 10000; // 10 Segundo na limitasyon
+const LIMIT = 3; // Higit sa 3 na aksyon = BAN
 
 // --- DATA SAVE/LOAD ---
 function loadData() {
@@ -65,14 +70,34 @@ function saveData() {
 }
 loadData();
 
-const commands = [].map(command => command.toJSON());
+const commands = [];
 
 // --- BOT ONLINE ---
-client.on(Events.Ready, async () => {
-    console.log(`🛡️  AZURA ULTIMATE SECURITY SYSTEM ONLINE 🛡️`);
+client.once(Events.Ready, async () => {
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`🛡️  AZURA ULTIMATE SECURITY SYSTEM ACTIVE 🛡️`);
     console.log(`✅ MODE: GOD MODE - WALANG MAKAKAGALAW KUNDI IKAW LANG`);
+    console.log(`🔒 PROTECTIONS: NUKE | RAID | ADMIN | SPAM | LINKS`);
+    console.log(`🤖 LOGGED IN AS: ${client.user.tag}`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    
     const rest = new REST({ version: '10' }).setToken(TOKEN);
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    try {
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('✅ Slash Commands: LOADED & REGISTERED');
+    } catch (err) {
+        console.error('❌ Error Loading Commands:', err);
+    }
+
+    // ✅ STATUS: Watching Server | PUBLIC AZURA - Tuloy-tuloy na pagpapalit
+    setInterval(() => {
+        const activities = [
+            { name: 'Server', type: ActivityType.Watching },
+            { name: 'PUBLIC AZURA', type: ActivityType.Watching }
+        ];
+        const current = activities[Math.floor((Date.now() / 10000) % activities.length)];
+        client.user.setActivity(current.name, { type: current.type });
+    }, 10000); // Magpapalit bawat 10 segundo
 });
 
 // ==================================================
@@ -95,16 +120,30 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 
         if (!executor || executor.id === DB.ownerId || executor.id === client.user.id) return;
 
-        logSecurity(`🚨 **ANTI-GIVE ADMIN TRIGGERED**\n**Target:** ${newMember.user.tag} (${newMember.id})\n**Salarin:** ${executor.tag} (${executor.id})\n🔒 **Aksyon:** Tinanggal lahat ng roles, BINAN sa server (Permanent).`, '#FF0000');
+        logSecurity(`🚨 **ANTI-GIVE ADMIN TRIGGERED**\n**Target:** ${newMember.user.tag} (${newMember.id})\n**Salarin:** ${executor.tag} (${executor.id})\n🔒 **Aksyon:** Tinanggal lahat ng roles, SALARIN AY BINAN PERMANENTE.`, '#FF0000');
 
-        // IBALIK SA DATIN ANG ROLES
+        // IBALIK SA DATIN ANG ROLES NG USER
         const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
         for (const [roleId] of addedRoles) await newMember.roles.remove(roleId).catch(() => {});
 
-        // PARUSA SA NAGBIGAY
+        // PARUSAHAN ANG NAGBIGAY NG ADMIN
         const staffMember = newMember.guild.members.cache.get(executor.id);
         if (staffMember) {
-            await staffMember.ban({ reason: 'AZURA SECURITY: Ilegal na pagbibigay ng Administrator' }).catch(() => {});
+            await staffMember.ban({ reason: 'AZURA SECURITY: Ilegal na pagbibigay ng Administrator Permissions' }).catch(() => {});
+        }
+    }
+
+    // === ANTI MASS ROLE ADD ===
+    if (DB.security.antiMassRole) {
+        const logs = await newMember.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberRoleUpdate });
+        const executor = logs.entries.first()?.executor;
+        if (!executor || executor.id === DB.ownerId || executor.bot) return;
+
+        trackAction(executor.id);
+        if (isLimitReached(executor.id)) {
+            logSecurity(`🚨 **MASS ROLE DETECTED**\n**Salarin:** ${executor.tag}\n🔒 **Aksyon:** Sobrang dami ng binigay na role, BINAN AGAD.`, '#FF0000');
+            const member = newMember.guild.members.cache.get(executor.id);
+            if (member) await member.ban({ reason: 'AZURA SECURITY: Mass Role Assignment detected' }).catch(() => {});
         }
     }
 });
@@ -118,7 +157,7 @@ client.on(Events.MessageCreate, async (message) => {
     const now = Date.now();
     const isOwner = authorId === DB.ownerId;
 
-    // 1. ANTI-SPAM (SOBRANG HIGPIT)
+    // 1. ANTI-SPAM (SOBRANG HIGPIT - 3 messages sa loob ng 2 seconds = BAN)
     if (DB.security.antiSpam && !isOwner) {
         if (!spamMap.has(authorId)) spamMap.set(authorId, []);
         const userLog = spamMap.get(authorId);
@@ -127,8 +166,8 @@ client.on(Events.MessageCreate, async (message) => {
         const recentMessages = userLog.filter(log => now - log.time < 2000); // 2 SECONDS LANG
         spamMap.set(authorId, recentMessages);
 
-        if (recentMessages.length > 3) { // KAPAG 3 NA SA LOOB NG 2S
-            logSecurity(`⚠️ **ANTI-SPAM TRIGGERED**\n**User:** ${message.author.tag}\n🔒 **Aksyon:** BINAN (Spamming), binura lahat ng mensahe.`, '#FF0000');
+        if (recentMessages.length > 3) { // KAPAG 4 NA O HIGIT
+            logSecurity(`⚠️ **ANTI-SPAM TRIGGERED**\n**User:** ${message.author.tag}\n**Channel:** ${message.channel}\n🔒 **Aksyon:** BINAN (Spamming/Flooding), binura lahat ng mensahe.`, '#FF0000');
             
             // BURA LAHAT NG SPAM
             for (const log of recentMessages) {
@@ -145,28 +184,19 @@ client.on(Events.MessageCreate, async (message) => {
 
     if (isOwner) return;
 
-    // 2. LINK PROTECTION (Bawal ang ibang server)
-    if (DB.security.linkProtection) {
-        const inviteRegex = /(https?:\/\/)?(www\.)?(discord\.(gg|io|me|li|com)|discordapp\.com\/invite)\/[a-zA-Z0-9]+/gi;
-        const badDomains = ['discord.gg', 'discord.com/invite', 'dsc.gg', 'invite.gg'];
-        
-        if (inviteRegex.test(message.content)) {
-            logSecurity(`🚫 **FORBIDDEN LINK DETECTED**\n**User:** ${message.author.tag}\n**Channel:** ${message.channel}\n🔒 **Aksyon:** Mensahe binura, User BINAN.`, '#FF0000');
-            await message.delete().catch(() => {});
-            await message.member.ban({ reason: 'AZURA SECURITY: Nagpadala ng ibang server link' }).catch(() => {});
-            return;
-        }
-    }
-
-    // 3. ANTI IMAGE GRABBER / IP LOGGER
+    // 2. LINK PROTECTION: ✅ PINAYAGAN NA ANG LAHAT NG LINKS, PERO HINDI ANG IP-logger
     if (DB.security.antiImageGrabber) {
-        const grabberDomains = ['iplogger.org', 'grabify.link', 'blasze.com', 'ezstat.ru', 'ip-tracker.org', 'leak.sx', 'logger', 'steal', 'log.', 'ip.', 'tracker', 'link'];
+        const grabberDomains = [
+            'iplogger.org', 'grabify.link', 'blasze.com', 'ezstat.ru', 'ip-tracker.org', 
+            'leak.sx', 'logger', 'steal', 'log.', 'ip.', 'tracker', 'link', 'stat', 
+            'cpm', 'tinyurl', 'bit.ly', 'shorturl', 'get', 'info', 'geo', 'loc'
+        ];
         const containsGrabber = grabberDomains.some(domain => message.content.toLowerCase().includes(domain));
 
         if (containsGrabber) {
-            logSecurity(`🚫 **DANGEROUS LINK DETECTED**\n**User:** ${message.author.tag}\n**Link:** \`${message.content}\`\n🔒 **Aksyon:** Mensahe binura, User BINAN.`, '#FF0000');
+            logSecurity(`🚫 **DANGEROUS LINK DETECTED**\n**User:** ${message.author.tag}\n**Link:** \`${message.content}\`\n🔒 **Aksyon:** Mensahe binura, User BINAN. (IP LOGGER DETECTED)`, '#FF0000');
             await message.delete().catch(() => {});
-            await message.member.ban({ reason: 'AZURA SECURITY: Nagpadala ng IP Logger / Virus Link' }).catch(() => {});
+            await message.member.ban({ reason: 'AZURA SECURITY: Nagpadala ng IP Logger / Virus / Dangerous Link' }).catch(() => {});
             return;
         }
     }
@@ -185,18 +215,21 @@ client.on(Events.ChannelDelete, async (channel) => {
 
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    logSecurity(`🚨 **ANTI-NUKE: CHANNEL DELETED**\n**Salarin:** ${user.tag} (${user.id})\n**Channel:** #${channel.name}\n🔒 **Aksyon:** IBINALIK ANG CHANNEL, SALARIN BINAN.`, '#FF0000');
+    logSecurity(`🚨 **ANTI-NUKE: CHANNEL DELETED**\n**Salarin:** ${user.tag} (${user.id})\n**Channel Name:** #${channel.name}\n🔒 **Aksyon:** IBINALIK AGAD ANG CHANNEL, SALARIN BINAN.`, '#FF0000');
     
     const member = channel.guild.members.cache.get(user.id);
     if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbura ng Channel (NUKE ATTEMPT)' }).catch(() => {});
 
-    // IBALIK AGAD ANG CHANNEL
+    // IBALIK AGAD ANG CHANNEL KASAMA ANG SETTINGS
     channel.guild.channels.create({
         name: channel.name,
         type: channel.type,
         parent: channel.parent,
         position: channel.position,
-        permissionOverwrites: channel.permissionOverwrites.cache
+        permissionOverwrites: channel.permissionOverwrites.cache,
+        topic: channel.topic,
+        nsfw: channel.nsfw,
+        rateLimitPerUser: channel.rateLimitPerUser
     }).catch(() => {});
 });
 
@@ -210,13 +243,13 @@ client.on(Events.ChannelUpdate, async (oldChannel, newChannel) => {
     if (!user || user.id === DB.ownerId || user.bot) return;
 
     if (oldChannel.name !== newChannel.name || JSON.stringify(oldChannel.permissionOverwrites) !== JSON.stringify(newChannel.permissionOverwrites)) {
-        logSecurity(`🚨 **ANTI-NUKE: CHANNEL EDITED**\n**Salarin:** ${user.tag}\n**Channel:** #${oldChannel.name}\n🔒 **Aksyon:** Ibinalik sa dati, Salarin BINAN.`, '#FF0000');
+        logSecurity(`🚨 **ANTI-NUKE: CHANNEL EDITED**\n**Salarin:** ${user.tag}\n**Channel:** #${oldChannel.name}\n🔒 **Aksyon:** Ibinalik sa dati ang pangalan at perms, Salarin BINAN.`, '#FF0000');
         await newChannel.setName(oldChannel.name).catch(() => {});
         await newChannel.setPosition(oldChannel.position).catch(() => {});
         await newChannel.permissionOverwrites.set(oldChannel.permissionOverwrites.cache).catch(() => {});
         
         const member = newChannel.guild.members.cache.get(user.id);
-        if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbago ng settings ng Channel' }).catch(() => {});
+        if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbago ng settings o pangalan ng Channel' }).catch(() => {});
     }
 });
 
@@ -229,7 +262,7 @@ client.on(Events.ChannelCreate, async (channel) => {
 
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    logSecurity(`🚨 **ANTI-NUKE: CHANNEL CREATED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang ginawang channel, Salarin BINAN.`, '#FF0000');
+    logSecurity(`🚨 **ANTI-NUKE: CHANNEL CREATED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang ginawang channel (Hindi awtorisado), Salarin BINAN.`, '#FF0000');
     await channel.delete().catch(() => {});
     
     const member = channel.guild.members.cache.get(user.id);
@@ -252,13 +285,14 @@ client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
     // KUNG NAGLAHAD NG ADMIN O MGA DELIKADONG PERMS
     if ((newRole.permissions.has(PermissionsBitField.Flags.Administrator) && !oldRole.permissions.has(PermissionsBitField.Flags.Administrator)) ||
         (newRole.permissions.has(PermissionsBitField.Flags.ManageGuild) && !oldRole.permissions.has(PermissionsBitField.Flags.ManageGuild)) ||
-        (newRole.permissions.has(PermissionsBitField.Flags.ManageRoles) && !oldRole.permissions.has(PermissionsBitField.Flags.ManageRoles))) {
+        (newRole.permissions.has(PermissionsBitField.Flags.ManageRoles) && !oldRole.permissions.has(PermissionsBitField.Flags.ManageRoles)) ||
+        (newRole.permissions.has(PermissionsBitField.Flags.ManageChannels) && !oldRole.permissions.has(PermissionsBitField.Flags.ManageChannels))) {
         
         await newRole.setPermissions(oldRole.permissions).catch(() => {});
-        logSecurity(`🚨 **ANTI-TOKEN STEAL DETECTED**\n**Salarin:** ${user.tag}\n**Role:** ${newRole.name}\n🔒 **Aksyon:** Ibinalik ang perms, Salarin BINAN.`, '#FF0000');
+        logSecurity(`🚨 **ANTI-TOKEN STEAL DETECTED**\n**Salarin:** ${user.tag}\n**Role:** ${newRole.name}\n🔒 **Aksyon:** Ibinalik ang dating Permissions, Salarin BINAN.`, '#FF0000');
         
         const member = newRole.guild.members.cache.get(user.id);
-        if (member) await member.ban({ reason: 'AZURA SECURITY: Sinubukang nakawin ang Server / Permissions' }).catch(() => {});
+        if (member) await member.ban({ reason: 'AZURA SECURITY: Sinubukang nakawin ang Server / Magdagdag ng Delikadong Permissions' }).catch(() => {});
     }
 });
 
@@ -269,7 +303,7 @@ client.on(Events.GuildRoleCreate, async (role) => {
     const user = logs.entries.first()?.executor;
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    logSecurity(`🚨 **ROLE CREATE DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang role, Salarin BINAN.`, '#FF0000');
+    logSecurity(`🚨 **ROLE CREATE DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang role na ginawa, Salarin BINAN.`, '#FF0000');
     await role.delete().catch(() => {});
     const member = role.guild.members.cache.get(user.id);
     if (member) await member.ban({ reason: 'AZURA SECURITY: Ilegal na paggawa ng Role' }).catch(() => {});
@@ -281,13 +315,13 @@ client.on(Events.GuildRoleDelete, async (role) => {
     const user = logs.entries.first()?.executor;
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    logSecurity(`🚨 **ROLE DELETE DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** BINAN ang salarin.`, '#FF0000');
+    logSecurity(`🚨 **ROLE DELETE DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** BINAN ang salarin dahil pagtatangka sa seguridad.`, '#FF0000');
     const member = role.guild.members.cache.get(user.id);
-    if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbura ng Role' }).catch(() => {});
+    if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbura ng Role / Pagsubok na sirain ang server' }).catch(() => {});
 });
 
 // ==============================================
-// 🛡️ ANTI MASS BAN / KICK / WEBHOOK
+// 🛡️ ANTI MASS BAN / KICK / WEBHOOK / EMOJI
 // ==============================================
 
 // ANTI MASS BAN
@@ -297,15 +331,26 @@ client.on(Events.GuildBanAdd, async (ban) => {
     const user = logs.entries.first()?.executor;
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    const now = Date.now();
-    if (!actionLog.has(user.id)) actionLog.set(user.id, []);
-    actionLog.get(user.id).push(now);
-    
-    const recentActions = actionLog.get(user.id).filter(t => now - t < 10000); // 10 seconds
-    if (recentActions.length >= 3) { // Kapag 3 na ban
-        logSecurity(`🚨 **MASS BAN DETECTED**\n**Salarin:** ${user.tag}\n**Bilang:** ${recentActions.length} tao\n🔒 **Aksyon:** BINAN ang salarin.`, '#FF0000');
+    trackAction(user.id);
+    if (isLimitReached(user.id)) {
+        logSecurity(`🚨 **MASS BAN DETECTED**\n**Salarin:** ${user.tag}\n**Bilang:** Sobrang dami ng binan sa maikling oras\n🔒 **Aksyon:** BINAN ang salarin at ibabalik ang mga user.`, '#FF0000');
         const member = ban.guild.members.cache.get(user.id);
         if (member) await member.ban({ reason: 'AZURA SECURITY: Mass Ban / Raid Attempt' }).catch(() => {});
+    }
+});
+
+// ANTI MASS KICK
+client.on(Events.GuildMemberRemove, async (member) => {
+    if (!DB.security.antiMassKick || !member.kickable) return;
+    const logs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
+    const user = logs.entries.first()?.executor;
+    if (!user || user.id === DB.ownerId || user.bot) return;
+
+    trackAction(user.id);
+    if (isLimitReached(user.id)) {
+        logSecurity(`🚨 **MASS KICK DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** BINAN ang salarin dahil maraming tinanggal na miyembro.`, '#FF0000');
+        const staff = member.guild.members.cache.get(user.id);
+        if (staff) await staff.ban({ reason: 'AZURA SECURITY: Mass Kick detected' }).catch(() => {});
     }
 });
 
@@ -316,18 +361,42 @@ client.on(Events.WebhookCreate, async (webhook) => {
     const user = logs.entries.first()?.executor;
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    logSecurity(`🚨 **WEBHOOK CREATED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang webhook, Salarin BINAN.`, '#FF0000');
+    logSecurity(`🚨 **WEBHOOK CREATED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Binura ang webhook (ginagamit sa pagnu-nuke), Salarin BINAN.`, '#FF0000');
     await webhook.delete().catch(() => {});
     const member = webhook.guild.members.cache.get(user.id);
-    if (member) await member.ban({ reason: 'AZURA SECURITY: Gumawa ng Webhook (Tool para sa Nuke)' }).catch(() => {});
+    if (member) await member.ban({ reason: 'AZURA SECURITY: Gumawa ng Webhook (Common Nuke Tool)' }).catch(() => {});
+});
+
+// ANTI EMOJI / STICKER DELETE / EDIT
+client.on(Events.GuildEmojiUpdate, async (oldEmoji, newEmoji) => {
+    if (!DB.security.antiEmojiSticker) return;
+    const logs = await newEmoji.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.EmojiUpdate });
+    const user = logs.entries.first()?.executor;
+    if (!user || user.id === DB.ownerId || user.bot) return;
+    
+    logSecurity(`🚨 **EMOJI EDITED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Ibinalik sa dati, Salarin BINAN.`, '#FF0000');
+    await newEmoji.setName(oldEmoji.name).catch(() => {});
+    const member = newEmoji.guild.members.cache.get(user.id);
+    if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbago ng Emoji' }).catch(() => {});
+});
+
+client.on(Events.GuildEmojiDelete, async (emoji) => {
+    if (!DB.security.antiEmojiSticker) return;
+    const logs = await emoji.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.EmojiDelete });
+    const user = logs.entries.first()?.executor;
+    if (!user || user.id === DB.ownerId || user.bot) return;
+    
+    logSecurity(`🚨 **EMOJI DELETED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** BINAN ang salarin.`, '#FF0000');
+    const member = emoji.guild.members.cache.get(user.id);
+    if (member) await member.ban({ reason: 'AZURA SECURITY: Nagbura ng Emoji' }).catch(() => {});
 });
 
 // ==============================================
 // 🛡️ ANTI RAID SYSTEM
 // ==============================================
 client.on(Events.GuildMemberAdd, async (member) => {
+    // ANTI ADD BOT
     if (member.user.bot) {
-        // ANTI ADD BOT
         const logs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.BotAdd });
         const user = logs.entries.first()?.executor;
         if (user && user.id !== DB.ownerId) {
@@ -341,12 +410,12 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
     const now = Date.now();
     joinLog.push(now);
-    joinLog = joinLog.filter(time => now - time < 10000); // 10 Segundo
+    joinLog = joinLog.filter(time => now - time < 10000); // 10 Segundo na pagbantay
 
-    if (joinLog.length >= 5 && DB.security.antiRaidDetection) {
-        logSecurity(`🚨 **RAID ALERT! MARAMIHANG PAGDATING**\n**Bilang:** ${joinLog.length} tao sa loob ng 10s\n🔒 **Aksyon:** SERVER LOCKED + VERIFICATION MAXIMUM`, '#FF0000');
+    if (joinLog.length >= 5 && DB.security.antiRaidDetection) { // Kapag 5 tao pataas ang pumasok
+        logSecurity(`🚨 **RAID ALERT! MARAMIHANG PAGDATING**\n**Bilang:** ${joinLog.length} tao sa loob ng 10 segundo\n🔒 **Aksyon:** SERVER LOCKED + VERIFICATION MAXIMUM + AUTO BAN SA LAHAT NG KAKASUKO LANG.`, '#FF0000');
         
-        // I-LOCK ANG SERVER
+        // I-LOCK AT PATAASIN ANG SEGURIDAD NG SERVER
         await member.guild.setVerificationLevel(4).catch(() => {}); // Pinakamataas na seguridad
         await member.guild.setDefaultNotifications(2).catch(() => {}); // Only mentions
 
@@ -355,7 +424,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
         recentJoiners.forEach(async m => {
             await m.ban({ reason: 'AZURA SECURITY: Raid detected, automatic ban' }).catch(() => {});
         });
-        joinLog = []; // I-clear ang log
+        joinLog = []; // I-clear ang log pagkatapos ng raid
     }
 });
 
@@ -370,10 +439,11 @@ client.on(Events.GuildUpdate, async (oldGuild, newGuild) => {
 
     if (!user || user.id === DB.ownerId || user.bot) return;
 
-    if (oldGuild.name !== newGuild.name || oldGuild.icon !== newGuild.icon || oldGuild.banner !== newGuild.banner) {
-        logSecurity(`🚨 **SERVER EDIT DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Ibinalik ang pangalan/Icon, Salarin BINAN.`, '#FF0000');
+    if (oldGuild.name !== newGuild.name || oldGuild.icon !== newGuild.icon || oldGuild.banner !== newGuild.banner || oldGuild.verificationLevel !== newGuild.verificationLevel) {
+        logSecurity(`🚨 **SERVER EDIT DETECTED**\n**Salarin:** ${user.tag}\n🔒 **Aksyon:** Ibinalik ang pangalan, icon at settings, Salarin BINAN.`, '#FF0000');
         await newGuild.setName(oldGuild.name).catch(() => {});
         if (oldGuild.icon) await newGuild.setIcon(oldGuild.iconURL({ size: 4096 })).catch(() => {});
+        if (oldGuild.banner) await newGuild.setBanner(oldGuild.bannerURL({ size: 4096 })).catch(() => {});
         
         const member = newGuild.members.cache.get(user.id);
         if (member) await member.ban({ reason: 'AZURA SECURITY: Sinubukang baguhin ang pangalan o itsura ng Server' }).catch(() => {});
@@ -381,19 +451,40 @@ client.on(Events.GuildUpdate, async (oldGuild, newGuild) => {
 });
 
 // ==============================================
-// 📝 LOGGING FUNCTION
+// ⚙️ HELPER FUNCTIONS (Para sa Mass Action Detection)
+// ==============================================
+function trackAction(userId) {
+    const now = Date.now();
+    if (!actionLog.has(userId)) actionLog.set(userId, []);
+    const userActions = actionLog.get(userId);
+    userActions.push(now);
+    // Tanggalin ang mga lumang record
+    actionLog.set(userId, userActions.filter(time => now - time < COOLDOWN));
+}
+
+function isLimitReached(userId) {
+    return actionLog.has(userId) && actionLog.get(userId).length >= LIMIT;
+}
+
+// ==============================================
+// 📝 LOGGING FUNCTION - MAAYOS AT DETALYADO
 // ==============================================
 function logSecurity(message, color) {
     const ch = client.channels.cache.get(DB.channels.securityLogs);
-    if (!ch) return console.log("⚠️ Security Log Channel not found!");
+    if (!ch) return console.log("⚠️ SECURITY ALERT: Log Channel not found or inaccessible!");
     
     const embed = new EmbedBuilder()
         .setColor(color)
-        .setTitle('🛡️ AZURA SECURITY LOGS')
+        .setTitle('🛡️ AZURA ULTIMATE SECURITY SYSTEM')
         .setDescription(message)
         .setThumbnail('https://cdn-icons-png.flaticon.com/512/2647/2647625.png')
+        .addFields(
+            { name: '📊 Status', value: '**ACTIVE**', inline: true },
+            { name: '👁️ Mode', value: '**GOD MODE**', inline: true },
+            { name: '⏰ Time', value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: true }
+        )
         .setTimestamp()
-        .setFooter({ text: 'Azura Organization • Ultimate Protection', iconURL: 'https://cdn-icons-png.flaticon.com/512/1828/1828843.png' });
+        .setFooter({ text: 'Azura Organization • Walang makakagalaw kundi ang May-ari', iconURL: 'https://cdn-icons-png.flaticon.com/512/1828/1828843.png' });
 
     ch.send({ embeds: [embed] }).catch(() => {});
 }
