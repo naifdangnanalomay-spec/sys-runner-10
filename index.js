@@ -1,6 +1,6 @@
 const {
     Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder, Events,
-    REST, Routes, SlashCommandBuilder, AuditLogEvent, ChannelType, ActivityType, PermissionsBitField
+    REST, Routes, SlashCommandBuilder, AuditLogEvent, ChannelType, ActivityType
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -489,4 +489,5 @@ function logSecurity(message, color) {
     ch.send({ embeds: [embed] }).catch(() => {});
 }
 
+// 🔑 PARA GUMANA ANG BOT - HUWAG TANGGAL
 client.login(TOKEN);
